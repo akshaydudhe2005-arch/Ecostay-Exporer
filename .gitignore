@@ -1,0 +1,36 @@
+# Legacy nested download folder
+EcoStay-Explorer-main/
+
+# Dependencies
+node_modules/
+frontend/node_modules/
+backend/__pycache__/
+backend/**/__pycache__/
+*.pyc
+.Python
+
+# Build outputs
+frontend/.next/
+frontend/out/
+frontend/dist/
+dist/
+
+# Environment
+.env
+frontend/.env.local
+frontend/.env*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.sw?
+
+# Python
+*.egg-info/
+.venv/
+venv/

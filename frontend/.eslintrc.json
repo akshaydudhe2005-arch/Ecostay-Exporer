@@ -1,0 +1,4 @@
+{
+  "extends": ["next/core-web-vitals", "next/typescript"],
+  "ignorePatterns": ["**/*DESKTOP*", "src/App.jsx", "src/main.jsx", "src/About.jsx", "src/Dashboard.jsx"]
+}
