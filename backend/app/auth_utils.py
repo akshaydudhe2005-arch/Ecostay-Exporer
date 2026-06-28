@@ -2,24 +2,32 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import jwt
+import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from passlib.context import CryptContext
 
 from app.config import JWT_ALGORITHM, JWT_EXPIRE_MINUTES, JWT_SECRET
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer(auto_error=False)
 
 
 def hash_password(password: str) -> str:
-    safe = password.encode("utf-8")[:72].decode("utf-8", errors="ignore")
-    return pwd_context.hash(safe)
+    """Securely hash a cleartext password using pure native bcrypt."""
+    # Encode to bytes and strictly slice to 72 bytes max before passing to bcrypt
+    pwd_bytes = password.encode("utf-8")[:72]
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(pwd_bytes, salt)
+    return hashed.decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    safe = plain.encode("utf-8")[:72].decode("utf-8", errors="ignore")
-    return pwd_context.verify(safe, hashed)
+    """Verify a plain password against its hashed database entry."""
+    try:
+        plain_bytes = plain.encode("utf-8")[:72]
+        hashed_bytes = hashed.encode("utf-8")
+        return bcrypt.checkpw(plain_bytes, hashed_bytes)
+    except Exception:
+        return False
 
 
 def create_access_token(data: dict[str, Any]) -> str:
