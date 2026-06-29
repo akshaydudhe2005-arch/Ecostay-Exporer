@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from app.config import CORS_ORIGINS
 from app.database import close_db, connect_db, db, get_db
 from app.models.seed import SEED_METRICS, SEED_RESERVATIONS, SEED_STAYS
-from app.routes import auth, ai_metrics, stays
+from app.routes import ai_metrics, auth, booking, stays  # Imported booking here
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -61,10 +61,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# App Routing Engine Registry
 app.include_router(auth.router)
 app.include_router(stays.router)
 app.include_router(stays.reservations_router)
 app.include_router(ai_metrics.router)
+app.include_router(booking.router)  # Included booking router here smoothly
 
 
 @app.get("/api/health")
