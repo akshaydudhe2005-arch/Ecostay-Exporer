@@ -1,12 +1,34 @@
-import { EcoStayCard } from '@/components/EcoStayCard';
+import { EcoStayCarousel } from '@/components/EcoStayCarousel';
 import { NavButtonLink } from '@/components/NavButtonLink';
 import { fetchStaysServer } from '@/lib/server-api';
 
 export default async function HomePage() {
-  const stays = await fetchStaysServer();
+  const baseStays = await fetchStaysServer();
+
+  const placeholderStays = [
+    {
+      id: "mock-4",
+      name: "Amazon Rainforest Lodge",
+      location: "Amazon, Brazil",
+      rating: 4.9,
+      description: "Deep jungle immersive luxury treehouses built with zero-impact local materials and solar microgrids.",
+      image: "https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?w=600&q=80"
+    },
+    {
+      id: "mock-5",
+      name: "Kyoto Bamboo Eco-Retreat",
+      location: "Kyoto, Japan",
+      rating: 4.8,
+      description: "Traditional architecture integrated with modern geothermal heat pumps and graywater filtration paths.",
+      image: "https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?w=600&q=80"
+    }
+  ];
+
+  const combinedStays = baseStays.length >= 4 ? baseStays : [...baseStays, ...placeholderStays];
+  const duplicatedStays = [...combinedStays, ...combinedStays];
 
   return (
-    <main>
+    <main className="overflow-x-hidden">
       <section className="relative overflow-hidden bg-gradient-to-br from-emerald-700 via-emerald-600 to-teal-700 px-4 py-16 text-white sm:px-6 sm:py-20 lg:px-8 lg:py-28">
         <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=1600&q=80')] bg-cover bg-center opacity-20" />
         <div className="relative mx-auto flex w-full max-w-7xl flex-col items-start gap-6 md:max-w-4xl lg:max-w-7xl">
@@ -27,8 +49,8 @@ export default async function HomePage() {
         </div>
       </section>
 
-      <section className="mx-auto w-full max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
-        <div className="mb-10 text-center">
+      <section className="w-full py-14">
+        <div className="mx-auto max-w-7xl px-4 text-center sm:px-6 lg:px-8 mb-10">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 sm:text-3xl">
             Featured Eco-Accommodations
           </h2>
@@ -37,11 +59,9 @@ export default async function HomePage() {
             community impact badges.
           </p>
         </div>
-        <div className="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-3">
-          {stays.map((stay) => (
-            <EcoStayCard key={stay.id} stay={stay} />
-          ))}
-        </div>
+
+        {/* Embedded Interactive Drag-to-Scroll Showcase Component */}
+        <EcoStayCarousel stays={duplicatedStays} />
       </section>
     </main>
   );
