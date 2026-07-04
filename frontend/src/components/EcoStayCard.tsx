@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Input, Modal, Toast } from '@/components/ui';
+import { getStoredUser } from '@/lib/api'; // Matches the exact session helper used by Navbar
 
 interface StayProps {
   stay: {
@@ -20,15 +21,8 @@ interface StayProps {
 export function EcoStayCard({ stay }: StayProps) {
   const router = useRouter();
   const stayId = stay.id || stay._id;
-  const [isAuthenticated, setIsAuthenticated] = useState(true);
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('token') || localStorage.getItem('user');
-      setIsAuthenticated(token !== null ? true : true);
-    }
-  }, []);
-
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [checkIn, setCheckIn] = useState('');
   const [checkOut, setCheckOut] = useState('');
@@ -39,6 +33,26 @@ export function EcoStayCard({ stay }: StayProps) {
   const [toastMessage, setToastMessage] = useState('');
   const [toastVariant, setToastVariant] = useState<'success' | 'error' | 'info'>('success');
 
+  // Synchronize component state with the shared application session helper
+  const refreshAuthStatus = useCallback(() => {
+    const currentUser = getStoredUser();
+    setIsAuthenticated(currentUser !== null);
+  }, []);
+
+  useEffect(() => {
+    // Check authentication status on mount
+    refreshAuthStatus();
+
+    // Listen to your application's custom authentication change events
+    window.addEventListener('ecostay-auth-change', refreshAuthStatus);
+    window.addEventListener('focus', refreshAuthStatus);
+    
+    return () => {
+      window.removeEventListener('ecostay-auth-change', refreshAuthStatus);
+      window.removeEventListener('focus', refreshAuthStatus);
+    };
+  }, [refreshAuthStatus]);
+
   const showNotification = (message: string, variant: 'success' | 'error' | 'info') => {
     setToastMessage(message);
     setToastVariant(variant);
@@ -46,11 +60,18 @@ export function EcoStayCard({ stay }: StayProps) {
   };
 
   const handleBookingTrigger = () => {
-    if (!isAuthenticated) {
-      showNotification('Authentication required. Routing to account gateway...', 'info');
-      setTimeout(() => router.push('/login'), 1000);
+    // Absolute live check directly against the auth helper at click time
+    const activeUserSession = getStoredUser();
+
+    if (!activeUserSession) {
+      showNotification('Authentication required. Routing to login gateway...', 'info');
+      setTimeout(() => {
+        router.push('/login');
+      }, 1000);
       return;
     }
+
+    // Opens the booking options sheet immediately if logged in
     setIsModalOpen(true);
   };
 
@@ -91,10 +112,9 @@ export function EcoStayCard({ stay }: StayProps) {
 
   return (
     <>
-      {/* Changed width to w-full so the rigid track wrapper determines item spacing */}
       <div className="border border-gray-100 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-200 bg-white flex flex-col h-[430px] w-full dark:bg-neutral-900 dark:border-neutral-800">
         
-        {/* Card Image Area with Smooth Zoom */}
+        {/* Card Zoom Image Wrapper */}
         <div className="relative overflow-hidden bg-gray-100 dark:bg-neutral-800 h-48 shrink-0">
           <img
             src={stay.image || '/placeholder.jpg'}
@@ -108,7 +128,7 @@ export function EcoStayCard({ stay }: StayProps) {
           )}
         </div>
 
-        {/* Symmetry Fields */}
+        {/* Dynamic Descriptive Grid Section */}
         <div className="p-5 flex flex-col justify-between flex-grow">
           <div className="space-y-2">
             <div className="flex justify-between items-center text-sm text-gray-500">
@@ -131,6 +151,7 @@ export function EcoStayCard({ stay }: StayProps) {
         </div>
       </div>
 
+      {/* Date Configuration Dialog Modal Box */}
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={`Book ${stay.name}`}>
         <form onSubmit={handleBookingSubmit} className="space-y-4 mt-2">
           <Input label="Check-In" type="date" value={checkIn} onChange={(e) => setCheckIn(e.target.value)} disabled={loading} />
