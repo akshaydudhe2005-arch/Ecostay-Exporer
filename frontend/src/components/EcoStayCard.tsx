@@ -82,34 +82,49 @@ export function EcoStayCard({ stay }: StayProps) {
       return;
     }
 
+    // Retrieve the actual user session dynamically
+    const currentUser = getStoredUser();
+    const userEmail = currentUser?.email || 'akshaydudhe2005@gmail.com'; 
+
     setLoading(true);
     try {
       const response = await fetch('http://localhost:8000/api/bookings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}` 
+        },
         body: JSON.stringify({
-          stay_id: stayId || 'fallback_id',
+          stay_id: stayId,
           stay_name: stay.name,
           check_in: checkIn,
           check_out: checkOut,
           guests: Number(guests),
-          user_email: 'akshaydudhe2005@gmail.com',
+          user_email: userEmail,
         }),
       });
 
-      if (!response.ok) throw new Error('Failed to complete reservation.');
+      // ADD THIS LINE TO DEBUG:
+      const errorData = await response.json();
+      console.log('Backend Response:', errorData);
+
+      if (!response.ok) {
+        // Now it will throw the actual message from FastAPI, not a generic one
+        throw new Error(errorData.detail || errorData.message || 'Booking failed');
+      }
+      
       showNotification('Reservation secured successfully!', 'success');
       setIsModalOpen(false);
       setCheckIn('');
       setCheckOut('');
       setGuests(1);
-    } catch (error) {
-      showNotification('Database communication failure.', 'error');
+    } catch (error: any) {
+      console.error('Booking Error:', error);
+      showNotification(error.message || 'Database communication failure.', 'error');
     } finally {
       setLoading(false);
     }
   };
-
   return (
     <>
       <div className="border border-gray-100 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-200 bg-white flex flex-col h-[430px] w-full dark:bg-neutral-900 dark:border-neutral-800">
