@@ -11,14 +11,18 @@ import {
   type StoredUser,
 } from '@/lib/api';
 
+// Extended interface securely passing the original database identifier
+interface ExtendedReservation extends Reservation {
+  dbId: string;
+}
+
 const sidebarLinks = [
   { href: '/dashboard', label: 'Overview', active: true },
-  { href: '/showcase', label: 'Components' },
-  { href: '/about', label: 'Mission' },
-  { href: '/login', label: 'Account' },
+  { href: '/showcase', label: 'Components', active: false },
+  { href: '/about', label: 'Mission', active: false },
+  { href: '/login', label: 'Account', active: false },
 ];
 
-// Clean initialized zero-state to prevent mock data from flashing on screen load
 const initialEmptyMetrics: AIMetrics = {
   carbonSaved: '0.0t',
   ecoStaysHosted: '0',
@@ -51,9 +55,9 @@ const initialEmptyMetrics: AIMetrics = {
 
 export default function DashboardPage() {
   const [user, setUser] = useState<StoredUser | null>(null);
-  const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
+  const [selectedReservation, setSelectedReservation] = useState<ExtendedReservation | null>(null);
   const [isImpactModalOpen, setIsImpactModalOpen] = useState(false);
-  const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [reservations, setReservations] = useState<ExtendedReservation[]>([]);
   const [metricsData, setMetricsData] = useState<AIMetrics>(initialEmptyMetrics);
   const [loading, setLoading] = useState(true);
   const [backendStatus, setBackendStatus] = useState<'connected' | 'fallback' | 'checking'>('checking');
@@ -63,92 +67,158 @@ export default function DashboardPage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [toastVisible, setToastVisible] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
+  const [toastVariant, setToastVariant] = useState<'success' | 'error'>('error');
 
+  // Automatically dismiss toast alerts after 4 seconds
   useEffect(() => {
-    setUser(getStoredUser());
-  }, []);
+    if (toastVisible) {
+      const timer = setTimeout(() => setToastVisible(false), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [toastVisible]);
 
-  useEffect(() => {
-    let active = true;
-    const targetUserEmail = "akshaydudhe2005@gmail.com";
+  // Isolate database compilation logic so it can be re-triggered cleanly on mutations
+  const loadDashboardData = async (currentUser: StoredUser, isSilent = false) => {
+    if (!isSilent) setLoading(true);
+    try {
+      const healthRes = await api.health();
+      const res = await fetch(`http://localhost:8000/api/bookings/user/${currentUser.email}`);
+      if (!res.ok) throw new Error("Database interface rejection");
+      
+      const rawBookings = await res.json();
 
-    async function loadDashboard() {
-      try {
-        // Verify API engine integrity
-        const healthRes = await api.health();
-        
-        // Pull live, unfiltered transactions targeting your database account email
-        const res = await fetch(`http://localhost:8000/api/bookings/user/${targetUserEmail}`);
-        if (!res.ok) throw new Error("Database interface rejection");
-        
-        const rawBookings = await res.json();
-        
-        if (!active) return;
-
-        // Map backend document schemas safely to UI components
-        const dynamicReservations: Reservation[] = rawBookings.map((item: any) => ({
-          id: `RSV-${(item.id || item._id).slice(-5).toUpperCase()}`,
-          guest: "Akshay Dudhe",
+      const dynamicReservations: ExtendedReservation[] = rawBookings.map((item: any) => {
+        const structuralId = item.id || item._id || '';
+        return {
+          id: `RSV-${String(structuralId).slice(-5).toUpperCase()}`,
+          dbId: structuralId, // Retain original primary key for updates/deletes
+          guest: currentUser.name || "Akshay Dudhe",
           stay: item.stay_name || "Eco Stay Location",
           checkIn: item.check_in || "N/A",
           status: "Confirmed"
-        }));
-
-        // Calculate metrics dynamically based on live data length
-        const liveCarbonCalculated = (dynamicReservations.length * 0.4).toFixed(1) + "t";
-        const liveStaysCalculated = dynamicReservations.length.toString();
-        const liveBadgesCalculated = dynamicReservations.length > 0 ? (dynamicReservations.length + 1).toString() : "0";
-
-        const dynamicMetrics: AIMetrics = {
-          carbonSaved: liveCarbonCalculated,
-          ecoStaysHosted: liveStaysCalculated,
-          rewardBadges: liveBadgesCalculated,
-          carbonSavedDetail: 'CO₂ offset this quarter',
-          ecoStaysDetail: 'Verified green listings',
-          rewardBadgesDetail: 'Sustainability achievements',
-          quarterlyReport: `Your account has offset ${liveCarbonCalculated} of CO₂ this quarter through ${liveStaysCalculated} verified eco-stay bookings.`,
-          metrics: [
-            {
-              label: 'Carbon Saved',
-              value: liveCarbonCalculated,
-              detail: 'CO₂ offset this quarter',
-              color: 'from-emerald-500 to-teal-600',
-            },
-            {
-              label: 'Eco-Stays Hosted',
-              value: liveStaysCalculated,
-              detail: 'Verified green listings',
-              color: 'from-green-500 to-emerald-600',
-            },
-            {
-              label: 'Reward Badges',
-              value: liveBadgesCalculated,
-              detail: 'Sustainability achievements',
-              color: 'from-lime-500 to-green-600',
-            },
-          ],
         };
+      });
 
-        setBackendStatus(healthRes.database === 'connected' ? 'connected' : 'fallback');
-        setReservations(dynamicReservations);
-        setMetricsData(dynamicMetrics);
-      } catch (err) {
-        console.error("Failed to compile real-time telemetry:", err);
-        if (!active) return;
-        setBackendStatus('fallback');
-        // Clear metrics to prevent displaying false data if the connection fails
-        setReservations([]);
-        setMetricsData(initialEmptyMetrics);
-      } finally {
-        if (active) setLoading(false);
-      }
+      const liveCarbonCalculated = (dynamicReservations.length * 0.4).toFixed(1) + "t";
+      const liveStaysCalculated = dynamicReservations.length.toString();
+      const liveBadgesCalculated = dynamicReservations.length > 0 ? (dynamicReservations.length + 1).toString() : "0";
+
+      const dynamicMetrics: AIMetrics = {
+        carbonSaved: liveCarbonCalculated,
+        ecoStaysHosted: liveStaysCalculated,
+        rewardBadges: liveBadgesCalculated,
+        carbonSavedDetail: 'CO₂ offset this quarter',
+        ecoStaysDetail: 'Verified green listings',
+        rewardBadgesDetail: 'Sustainability achievements',
+        quarterlyReport: `Your account has offset ${liveCarbonCalculated} of CO₂ this quarter through ${liveStaysCalculated} verified eco-stay bookings.`,
+        metrics: [
+          { label: 'Carbon Saved', value: liveCarbonCalculated, detail: 'CO₂ offset this quarter', color: 'from-emerald-500 to-teal-600' },
+          { label: 'Eco-Stays Hosted', value: liveStaysCalculated, detail: 'Verified green listings', color: 'from-green-500 to-emerald-600' },
+          { label: 'Reward Badges', value: liveBadgesCalculated, detail: 'Sustainability achievements', color: 'from-lime-500 to-green-600' },
+        ],
+      };
+
+      setBackendStatus(healthRes.database === 'connected' ? 'connected' : 'fallback');
+      setReservations(dynamicReservations);
+      setMetricsData(dynamicMetrics);
+    } catch (err) {
+      console.error("Failed to compile real-time telemetry:", err);
+      setBackendStatus('fallback');
+      setReservations([]);
+      setMetricsData(initialEmptyMetrics);
+    } finally {
+      if (!isSilent) setLoading(false);
     }
-    
-    loadDashboard();
-    return () => {
-      active = false;
-    };
+  };
+
+  useEffect(() => {
+    const currentUser = getStoredUser();
+    setUser(currentUser);
+
+    if (!currentUser || !currentUser.email) {
+      setBackendStatus('fallback');
+      setLoading(false);
+      return;
+    }
+
+    loadDashboardData(currentUser);
   }, []);
+
+ // CRUD Operation: UPDATE
+  const handleModifyBooking = async (dbId: string) => {
+    const newDate = prompt("Enter a new Check-In Date (YYYY-MM-DD):", "2026-08-15");
+    if (!newDate) return;
+
+    try {
+      // 1. Try PATCH first (standard for partial updates like changing just the check_in date)
+      let response = await fetch(`http://localhost:8000/api/bookings/${dbId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ check_in: newDate }),
+      });
+
+      // 2. Fallback to PUT if your specific backend router requires PUT
+      if (!response.ok) {
+        response = await fetch(`http://localhost:8000/api/bookings/${dbId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ check_in: newDate }),
+        });
+      }
+
+      // 3. Fallback to adding a trailing slash if FastAPI strict_slashes is active
+      if (!response.ok) {
+        response = await fetch(`http://localhost:8000/api/bookings/${dbId}/`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ check_in: newDate }),
+        });
+      }
+
+      if (!response.ok) throw new Error("Could not update the transaction documents");
+
+      setToastVariant('success');
+      setToastMessage('Booking date adjusted successfully!');
+      setToastVisible(true);
+      
+      if (user) loadDashboardData(user, true); // Refresh data asynchronously
+    } catch (err) {
+      setToastVariant('error');
+      setToastMessage(err instanceof Error ? err.message : 'Modification failed');
+      setToastVisible(true);
+    }
+  };
+
+  // CRUD Operation: DELETE
+  const handleCancelBooking = async (dbId: string) => {
+    if (!confirm("Are you sure you want to completely remove this reservation from the cluster database?")) return;
+
+    try {
+      // 1. Try standard DELETE route
+      let response = await fetch(`http://localhost:8000/api/bookings/${dbId}`, {
+        method: 'DELETE',
+      });
+
+      // 2. Fallback with trailing slash to handle strict URL routing redirects
+      if (!response.ok) {
+        response = await fetch(`http://localhost:8000/api/bookings/${dbId}/`, {
+          method: 'DELETE',
+        });
+      }
+
+      if (!response.ok) throw new Error("Database rejection on record drop");
+
+      setToastVariant('success');
+      setToastMessage('Reservation purged successfully!');
+      setToastVisible(true);
+
+      if (user) loadDashboardData(user, true); // Refresh data asynchronously
+    } catch (err) {
+      setToastVariant('error');
+      setToastMessage(err instanceof Error ? err.message : 'Deletion failed');
+      setToastVisible(true);
+    }
+  };
 
   const runAiAnalysis = async () => {
     if (!aiPrompt.trim()) return;
@@ -159,6 +229,7 @@ export default function DashboardPage() {
       setAiResult(result.analysis);
       setAiSource(result.source === 'gemini' ? 'Powered by Gemini AI' : 'EcoStay smart insights');
     } catch (err) {
+      setToastVariant('error');
       setToastMessage(err instanceof Error ? err.message : 'Analysis failed');
       setToastVisible(true);
     } finally {
@@ -178,12 +249,11 @@ export default function DashboardPage() {
               <li key={link.href}>
                 <Link
                   href={link.href}
-                  className={[
-                    'block rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                  className={`block rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                     link.active
                       ? 'bg-emerald-600 text-white'
-                      : 'text-gray-700 hover:bg-emerald-50 dark:text-gray-300 dark:hover:bg-emerald-950',
-                  ].join(' ')}
+                      : 'text-gray-700 hover:bg-emerald-50 dark:text-gray-300 dark:hover:bg-emerald-950'
+                  }`}
                 >
                   {link.label}
                 </Link>
@@ -194,14 +264,13 @@ export default function DashboardPage() {
         <div className="mt-6 rounded-lg bg-gray-50 p-3 dark:bg-gray-900">
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">API Status</p>
           <p
-            className={[
-              'mt-1 text-sm font-medium',
+            className={`mt-1 text-sm font-medium ${
               backendStatus === 'connected'
                 ? 'text-emerald-600'
                 : backendStatus === 'fallback'
                   ? 'text-amber-600'
-                  : 'text-gray-500',
-            ].join(' ')}
+                  : 'text-gray-500'
+            }`}
           >
             {backendStatus === 'checking' && 'Checking...'}
             {backendStatus === 'connected' && '● Live Data Verified'}
@@ -217,7 +286,7 @@ export default function DashboardPage() {
               Impact Dashboard
             </h1>
             <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-              Logged in account: <span className="text-emerald-600 font-semibold">akshaydudhe2005@gmail.com</span>
+              Logged in account: <span className="text-emerald-600 font-semibold">{user?.email || 'Loading...'}</span>
             </p>
           </div>
           <Button variant="primary" size="md" onClick={() => setIsImpactModalOpen(true)}>
@@ -301,7 +370,7 @@ export default function DashboardPage() {
                 </h2>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[600px] text-left text-sm">
+                <table className="w-full min-w-[650px] text-left text-sm">
                   <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-500 dark:bg-gray-900 dark:text-gray-400">
                     <tr>
                       <th className="px-5 py-3 font-semibold">ID</th>
@@ -309,7 +378,7 @@ export default function DashboardPage() {
                       <th className="px-5 py-3 font-semibold">Eco-Stay</th>
                       <th className="px-5 py-3 font-semibold">Check-In</th>
                       <th className="px-5 py-3 font-semibold">Status</th>
-                      <th className="px-5 py-3 font-semibold">Action</th>
+                      <th className="px-5 py-3 font-semibold text-center">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
@@ -340,13 +409,31 @@ export default function DashboardPage() {
                             </span>
                           </td>
                           <td className="px-5 py-4">
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => setSelectedReservation(reservation)}
-                            >
-                              Details
-                            </Button>
+                            <div className="flex items-center justify-center gap-2">
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => setSelectedReservation(reservation)}
+                              >
+                                Details
+                              </Button>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => handleModifyBooking(reservation.dbId)}
+                                className="border-amber-500 text-amber-600 hover:bg-amber-50"
+                              >
+                                Modify
+                              </Button>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => handleCancelBooking(reservation.dbId)}
+                                className="border-red-500 text-red-600 hover:bg-red-50"
+                              >
+                                Cancel
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -408,7 +495,7 @@ export default function DashboardPage() {
 
       <Toast
         message={toastMessage}
-        variant="error"
+        variant={toastVariant}
         visible={toastVisible}
         onDismiss={() => setToastVisible(false)}
       />

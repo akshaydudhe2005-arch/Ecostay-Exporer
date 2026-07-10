@@ -60,3 +60,9 @@ Open http://localhost:3000
 - **Frontend:** Next.js 16, React 19, Tailwind CSS 4, TypeScript
 - **Backend:** FastAPI, Motor, Pydantic, JWT, Passlib
 - **Database:** MongoDB Atlas
+
+## Database Setup
+1. Create a MongoDB cluster on MongoDB Atlas.
+2. Create a `.env` file in the root directory:
+   ```env
+   MONGO_URI=your_mongodb_connection_string_here

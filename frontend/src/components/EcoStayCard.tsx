@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Input, Modal, Toast } from '@/components/ui';
-import { getStoredUser } from '@/lib/api'; // Matches the exact session helper used by Navbar
+import { getStoredUser } from '@/lib/api';
 
 interface StayProps {
   stay: {
@@ -20,7 +20,9 @@ interface StayProps {
 
 export function EcoStayCard({ stay }: StayProps) {
   const router = useRouter();
-  const stayId = stay.id || stay._id;
+  
+  // Safe extraction of backend IDs (checks stay.id, stay._id, and falls back gracefully)
+  const stayId = stay.id || stay._id || 'mock_stay_id';
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -33,17 +35,13 @@ export function EcoStayCard({ stay }: StayProps) {
   const [toastMessage, setToastMessage] = useState('');
   const [toastVariant, setToastVariant] = useState<'success' | 'error' | 'info'>('success');
 
-  // Synchronize component state with the shared application session helper
   const refreshAuthStatus = useCallback(() => {
     const currentUser = getStoredUser();
     setIsAuthenticated(currentUser !== null);
   }, []);
 
   useEffect(() => {
-    // Check authentication status on mount
     refreshAuthStatus();
-
-    // Listen to your application's custom authentication change events
     window.addEventListener('ecostay-auth-change', refreshAuthStatus);
     window.addEventListener('focus', refreshAuthStatus);
     
@@ -60,7 +58,6 @@ export function EcoStayCard({ stay }: StayProps) {
   };
 
   const handleBookingTrigger = () => {
-    // Absolute live check directly against the auth helper at click time
     const activeUserSession = getStoredUser();
 
     if (!activeUserSession) {
@@ -71,20 +68,18 @@ export function EcoStayCard({ stay }: StayProps) {
       return;
     }
 
-    // Opens the booking options sheet immediately if logged in
     setIsModalOpen(true);
   };
 
-  const handleBookingSubmit = async (e: React.FormEvent) => {
+const handleBookingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!checkIn || !checkOut) {
       showNotification('Please select both Check-In and Check-Out dates.', 'error');
       return;
     }
 
-    // Retrieve the actual user session dynamically
     const currentUser = getStoredUser();
-    const userEmail = currentUser?.email || 'akshaydudhe2005@gmail.com'; 
+    const userEmail = currentUser?.email || 'studyofakshay@gmail.com';
 
     setLoading(true);
     try {
@@ -95,8 +90,8 @@ export function EcoStayCard({ stay }: StayProps) {
           'Authorization': `Bearer ${localStorage.getItem('token')}` 
         },
         body: JSON.stringify({
-          stay_id: stayId,
-          stay_name: stay.name,
+          stay_id: String(stayId), // Force conversion to String to satisfy Pydantic
+          stay_name: stay.name || 'EcoStay Homestay', // Fallback string if name is missing
           check_in: checkIn,
           check_out: checkOut,
           guests: Number(guests),
@@ -104,13 +99,18 @@ export function EcoStayCard({ stay }: StayProps) {
         }),
       });
 
-      // ADD THIS LINE TO DEBUG:
-      const errorData = await response.json();
-      console.log('Backend Response:', errorData);
+      let errorData: any = null;
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        errorData = await response.json();
+      }
 
       if (!response.ok) {
-        // Now it will throw the actual message from FastAPI, not a generic one
-        throw new Error(errorData.detail || errorData.message || 'Booking failed');
+        const parsedDetail = errorData?.detail 
+          ? (typeof errorData.detail === 'object' ? JSON.stringify(errorData.detail) : errorData.detail)
+          : null;
+
+        throw new Error(parsedDetail || errorData?.message || 'Database validation mismatch.');
       }
       
       showNotification('Reservation secured successfully!', 'success');
@@ -119,7 +119,7 @@ export function EcoStayCard({ stay }: StayProps) {
       setCheckOut('');
       setGuests(1);
     } catch (error: any) {
-      console.error('Booking Error:', error);
+      console.error('Booking Error Details:', error);
       showNotification(error.message || 'Database communication failure.', 'error');
     } finally {
       setLoading(false);
@@ -128,8 +128,6 @@ export function EcoStayCard({ stay }: StayProps) {
   return (
     <>
       <div className="border border-gray-100 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-200 bg-white flex flex-col h-[430px] w-full dark:bg-neutral-900 dark:border-neutral-800">
-        
-        {/* Card Zoom Image Wrapper */}
         <div className="relative overflow-hidden bg-gray-100 dark:bg-neutral-800 h-48 shrink-0">
           <img
             src={stay.image || '/placeholder.jpg'}
@@ -143,7 +141,6 @@ export function EcoStayCard({ stay }: StayProps) {
           )}
         </div>
 
-        {/* Dynamic Descriptive Grid Section */}
         <div className="p-5 flex flex-col justify-between flex-grow">
           <div className="space-y-2">
             <div className="flex justify-between items-center text-sm text-gray-500">
@@ -166,8 +163,8 @@ export function EcoStayCard({ stay }: StayProps) {
         </div>
       </div>
 
-      {/* Date Configuration Dialog Modal Box */}
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={`Book ${stay.name}`}>
+      {/* Title safely renders stay.name even if structural parameters load dynamically */}
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={`Book ${stay.name || 'Your Eco-Stay'}`}>
         <form onSubmit={handleBookingSubmit} className="space-y-4 mt-2">
           <Input label="Check-In" type="date" value={checkIn} onChange={(e) => setCheckIn(e.target.value)} disabled={loading} />
           <Input label="Check-Out" type="date" value={checkOut} onChange={(e) => setCheckOut(e.target.value)} disabled={loading} />
