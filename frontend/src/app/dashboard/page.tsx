@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation'; // 1. Added Next.js routing hook
 import { Button, Input, Loader, Modal, Toast } from '@/components/ui';
 import {
   api,
@@ -54,6 +55,7 @@ const initialEmptyMetrics: AIMetrics = {
 };
 
 export default function DashboardPage() {
+  const router = useRouter(); // 2. Initialized the router instance
   const [user, setUser] = useState<StoredUser | null>(null);
   const [selectedReservation, setSelectedReservation] = useState<ExtendedReservation | null>(null);
   const [isImpactModalOpen, setIsImpactModalOpen] = useState(false);
@@ -133,31 +135,29 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const currentUser = getStoredUser();
-    setUser(currentUser);
 
+    // 3. CRITICAL INTERCEPTION: If credentials don't exist, kick the user back out immediately
     if (!currentUser || !currentUser.email) {
-      setBackendStatus('fallback');
-      setLoading(false);
+      router.push('/login?redirect=/dashboard');
       return;
     }
 
+    setUser(currentUser);
     loadDashboardData(currentUser);
-  }, []);
+  }, [router]);
 
- // CRUD Operation: UPDATE
+  // CRUD Operation: UPDATE
   const handleModifyBooking = async (dbId: string) => {
     const newDate = prompt("Enter a new Check-In Date (YYYY-MM-DD):", "2026-08-15");
     if (!newDate) return;
 
     try {
-      // 1. Try PATCH first (standard for partial updates like changing just the check_in date)
       let response = await fetch(`http://localhost:8000/api/bookings/${dbId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ check_in: newDate }),
       });
 
-      // 2. Fallback to PUT if your specific backend router requires PUT
       if (!response.ok) {
         response = await fetch(`http://localhost:8000/api/bookings/${dbId}`, {
           method: 'PUT',
@@ -166,7 +166,6 @@ export default function DashboardPage() {
         });
       }
 
-      // 3. Fallback to adding a trailing slash if FastAPI strict_slashes is active
       if (!response.ok) {
         response = await fetch(`http://localhost:8000/api/bookings/${dbId}/`, {
           method: 'PATCH',
@@ -181,7 +180,7 @@ export default function DashboardPage() {
       setToastMessage('Booking date adjusted successfully!');
       setToastVisible(true);
       
-      if (user) loadDashboardData(user, true); // Refresh data asynchronously
+      if (user) loadDashboardData(user, true);
     } catch (err) {
       setToastVariant('error');
       setToastMessage(err instanceof Error ? err.message : 'Modification failed');
@@ -194,12 +193,10 @@ export default function DashboardPage() {
     if (!confirm("Are you sure you want to completely remove this reservation from the cluster database?")) return;
 
     try {
-      // 1. Try standard DELETE route
       let response = await fetch(`http://localhost:8000/api/bookings/${dbId}`, {
         method: 'DELETE',
       });
 
-      // 2. Fallback with trailing slash to handle strict URL routing redirects
       if (!response.ok) {
         response = await fetch(`http://localhost:8000/api/bookings/${dbId}/`, {
           method: 'DELETE',
@@ -212,7 +209,7 @@ export default function DashboardPage() {
       setToastMessage('Reservation purged successfully!');
       setToastVisible(true);
 
-      if (user) loadDashboardData(user, true); // Refresh data asynchronously
+      if (user) loadDashboardData(user, true);
     } catch (err) {
       setToastVariant('error');
       setToastMessage(err instanceof Error ? err.message : 'Deletion failed');
