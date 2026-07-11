@@ -6,10 +6,15 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+# --- Slowapi Imports for Rate Limiting ---
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
+
 from app.config import CORS_ORIGINS
 from app.database import close_db, connect_db, db, get_db
 from app.models.seed import SEED_METRICS, SEED_RESERVATIONS, SEED_STAYS
 from app.routes import ai_metrics, auth, booking, stays  # Imported booking here
+from app.routes.auth import limiter  # Import the limiter instance from your auth router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -26,7 +31,7 @@ async def seed_database() -> None:
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app_instance: FastAPI):  # Renamed variable to map limiter state clearly
     connected = await connect_db()
     if connected:
         try:
@@ -38,6 +43,10 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="EcoStay Explorer API", version="1.0.0", lifespan=lifespan)
+
+# --- Attach Rate Limiter State & Global Exception Handler ---
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 @app.exception_handler(RequestValidationError)

@@ -1,7 +1,13 @@
 from datetime import datetime, timezone
-
+import os
 from bson import ObjectId
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+
+# Import slowapi tools for rate limiting
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.auth_utils import (
     create_access_token,
@@ -13,11 +19,18 @@ from app.auth_utils import (
 from app.database import get_db
 from app.models.schemas import TokenResponse, UserCreate, UserLogin, UserResponse
 
+# Initialize the rate limiter using the client's IP address
+limiter = Limiter(key_func=get_remote_address)
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+# Google Client ID (Set this in your .env file)
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com")
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(payload: UserCreate) -> TokenResponse:
+# Apply a rate limit: max 5 registration attempts per minute per IP address
+@limiter.limit("5/minute")
+async def register(request: Request, payload: UserCreate) -> TokenResponse:
     try:
         database = get_db()
         if database is None:
@@ -43,18 +56,18 @@ async def register(payload: UserCreate) -> TokenResponse:
     except HTTPException:
         raise
     except Exception as e:
-        # This will print the full error traceback directly in your Cursor terminal logs
         import traceback
         traceback.print_exc()
-        
-        # This sends the actual error message back to your browser console
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
             detail=f"Registration failed due to structural error: {str(e)}"
         )
 
+
 @router.post("/login", response_model=TokenResponse)
-async def login(payload: UserLogin) -> TokenResponse:
+# Apply a strict rate limit: max 5 login attempts per minute to stop brute-force spamming
+@limiter.limit("5/minute")
+async def login(request: Request, payload: UserLogin) -> TokenResponse:
     try:
         database = get_db()
         if database is None:
@@ -74,6 +87,49 @@ async def login(payload: UserLogin) -> TokenResponse:
         raise
     except Exception:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Login failed")
+
+
+@router.post("/google", response_model=TokenResponse)
+async def google_auth(token_payload: dict) -> TokenResponse:
+    """
+    Handles Google OAuth token exchange. Receives the credential token from 
+    the frontend, validates it via Google's API, creates the user if they don't 
+    exist, and provisions an app-specific JWT.
+    """
+    try:
+        database = get_db()
+        token = token_payload.get("credential")
+        if not token:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing Google credential token")
+        
+        # Verify the integrity of the Google ID token
+        id_info = id_token.verify_oauth2_token(token, google_requests.Request(), GOOGLE_CLIENT_ID)
+        
+        email = id_info.get("email").lower()
+        name = id_info.get("name", "")
+        
+        # Check if user already exists in MongoDB
+        doc = await database.users.find_one({"email": email})
+        
+        if not doc:
+            # First time logging in via Google -> Create a new user profile
+            doc = {
+                "email": email,
+                "password": "", # OAuth accounts do not use a standard password string
+                "name": name,
+                "createdAt": datetime.now(timezone.utc),
+            }
+            result = await database.users.insert_one(doc)
+            doc["_id"] = result.inserted_id
+            
+        user = serialize_user(doc)
+        app_token = create_access_token({"sub": user["id"], "email": user["email"]})
+        return TokenResponse(access_token=app_token, user=UserResponse(**user))
+        
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Google token validation match")
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Google OAuth exchange crashed")
 
 
 @router.get("/me", response_model=UserResponse)
