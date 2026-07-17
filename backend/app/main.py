@@ -81,10 +81,11 @@ app.include_router(booking.router)  # Included booking router here smoothly
 @app.get("/api/health")
 async def health_check():
     if db is None:
-        return {"status": "ok", "database": "fallback"}
+        return {"status": "fallback", "database": "fallback"}
     try:
         database = get_db()
         await database.command("ping")
-        return {"status": "ok", "database": "connected"}
+        # Changing "ok" to "connected" updates the frontend badge to green
+        return {"status": "connected", "database": "connected"}
     except Exception:
         raise HTTPException(status_code=503, detail="Database unavailable")

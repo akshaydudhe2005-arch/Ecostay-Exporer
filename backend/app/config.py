@@ -1,7 +1,15 @@
 import os
 from pathlib import Path
-
 from dotenv import load_dotenv
+
+# Use an explicit path to find the .env file in the project root
+# If your .env is in the folder above 'backend', this works:
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+env_path = BASE_DIR / ".env"
+
+load_dotenv(dotenv_path=env_path)
+
+# ... rest of your variables ...
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT_DIR / ".env")
@@ -14,3 +22,6 @@ JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = 60 * 24
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 CORS_ORIGINS = ["http://localhost:3000"]
+# Add this to the bottom of app/config.py
+print(f"DEBUG: GEMINI_API_KEY loaded: {GEMINI_API_KEY}")
+print(f"DEBUG: MONGO_URI loaded: {MONGO_URI}")

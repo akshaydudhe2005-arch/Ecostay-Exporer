@@ -1,5 +1,7 @@
 import logging
-
+import json
+import urllib.error
+import urllib.request
 from fastapi import APIRouter, HTTPException, status
 
 from app.config import GEMINI_API_KEY
@@ -39,18 +41,16 @@ async def get_metrics() -> AIMetricsResponse:
 
 @router.post("/analyze", response_model=AIAnalysisResponse)
 async def analyze_sustainability(payload: AIAnalysisRequest) -> AIAnalysisResponse:
-    import json
-    import urllib.error
-    import urllib.request
+    # Clean the API key string from hidden wrapping quotes or spaces
+    clean_key = GEMINI_API_KEY.strip().replace('"', '').replace("'", "")
 
-    if not GEMINI_API_KEY or not GEMINI_API_KEY.startswith("AIza"):
+    if not clean_key or not (clean_key.startswith("AIza") or clean_key.startswith("AQ.")):
         return _local_analysis(payload.prompt)
 
     try:
-        url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-        )
+        # PRODUCTION MIGRATION: Target the live active gemini-3.5-flash engine
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={clean_key}"
+        
         body = json.dumps(
             {
                 "contents": [
@@ -68,19 +68,24 @@ async def analyze_sustainability(payload: AIAnalysisRequest) -> AIAnalysisRespon
                 ]
             }
         ).encode("utf-8")
+        
         req = urllib.request.Request(
             url,
             data=body,
             headers={"Content-Type": "application/json"},
             method="POST",
         )
+        
         with urllib.request.urlopen(req, timeout=20) as response:
             data = json.loads(response.read().decode("utf-8"))
+            
         text = data["candidates"][0]["content"]["parts"][0]["text"]
         return AIAnalysisResponse(analysis=text.strip(), source="gemini")
+        
     except urllib.error.HTTPError as exc:
-        logger.warning("Gemini API HTTP error %s — using local fallback", exc.code)
+        error_details = exc.read().decode("utf-8")
+        logger.error("Gemini API HTTP error %s: %s", exc.code, error_details)
         return _local_analysis(payload.prompt)
     except Exception as exc:
-        logger.warning("Gemini API failed: %s — using local fallback", exc)
+        logger.error("Gemini API execution failed: %s", exc)
         return _local_analysis(payload.prompt)
