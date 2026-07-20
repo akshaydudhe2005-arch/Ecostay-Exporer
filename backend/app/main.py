@@ -13,8 +13,8 @@ from slowapi import _rate_limit_exceeded_handler
 from app.config import CORS_ORIGINS
 from app.database import close_db, connect_db, db, get_db
 from app.models.seed import SEED_METRICS, SEED_RESERVATIONS, SEED_STAYS
-from app.routes import ai_metrics, auth, booking, stays  # Imported booking here
-from app.routes.auth import limiter  # Import the limiter instance from your auth router
+from app.routes import ai_metrics, auth, booking, stays
+from app.routes.auth import limiter
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ async def seed_database() -> None:
 
 
 @asynccontextmanager
-async def lifespan(app_instance: FastAPI):  # Renamed variable to map limiter state clearly
+async def lifespan(app_instance: FastAPI):
     connected = await connect_db()
     if connected:
         try:
@@ -62,9 +62,10 @@ async def unhandled_exception_handler(_: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
+# --- CORS Middleware ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
+    allow_origins=CORS_ORIGINS if CORS_ORIGINS else ["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,7 +76,7 @@ app.include_router(auth.router)
 app.include_router(stays.router)
 app.include_router(stays.reservations_router)
 app.include_router(ai_metrics.router)
-app.include_router(booking.router)  # Included booking router here smoothly
+app.include_router(booking.router)
 
 
 @app.get("/api/health")
@@ -85,7 +86,6 @@ async def health_check():
     try:
         database = get_db()
         await database.command("ping")
-        # Changing "ok" to "connected" updates the frontend badge to green
         return {"status": "connected", "database": "connected"}
     except Exception:
         raise HTTPException(status_code=503, detail="Database unavailable")

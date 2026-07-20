@@ -1,15 +1,18 @@
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, HTTPException, status
-from fastapi.encoders import jsonable_encoder
-from pydantic import BaseModel, EmailStr, field_validator
+
 from bson import ObjectId
 from bson.errors import InvalidId
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.encoders import jsonable_encoder
+from pydantic import BaseModel, EmailStr, field_validator
+
+from app.auth_utils import get_current_user
 from app.database import get_db
 
 router = APIRouter(prefix="/api/bookings", tags=["bookings"])
 
-# Request validation schema for creation
+
 class BookingCreate(BaseModel):
     stay_id: str
     stay_name: str
@@ -25,23 +28,27 @@ class BookingCreate(BaseModel):
             return v.strip().lower()
         return v
 
-# Request validation schema for date updates
+
 class BookingUpdate(BaseModel):
     check_in: str
     check_out: Optional[str] = None
     model_config = {"extra": "ignore"}
 
 
+# --- CREATE BOOKING (PROTECTED) ---
 @router.post("", status_code=status.HTTP_201_CREATED)
 @router.post("/", status_code=status.HTTP_201_CREATED)
-async def create_booking(payload: BookingCreate) -> Dict[str, str]:
+async def create_booking(
+    payload: BookingCreate,
+    current_user: dict = Depends(get_current_user),
+) -> Dict[str, str]:
     database = get_db()
     if database is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database offline"
+            detail="Database offline",
         )
-    
+
     booking_doc = {
         "stay_id": payload.stay_id,
         "stay_name": payload.stay_name,
@@ -49,64 +56,71 @@ async def create_booking(payload: BookingCreate) -> Dict[str, str]:
         "check_out": payload.check_out,
         "guests": payload.guests,
         "user_email": payload.user_email,
-        "booked_at": datetime.now(timezone.utc)
+        "user_id": current_user["id"],
+        "booked_at": datetime.now(timezone.utc),
     }
-    
+
     try:
         result = await database.reservations.insert_one(booking_doc)
         return {
-            "status": "success", 
+            "status": "success",
             "booking_id": str(result.inserted_id),
-            "message": "Reservation secured successfully!"
+            "message": "Reservation secured successfully!",
         }
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to save booking to database"
+            detail="Failed to save booking to database",
         )
 
 
+# --- GET ALL USER BOOKINGS (PROTECTED) ---
 @router.get("/user/{email}")
 @router.get("/user/{email}/")
-async def get_user_bookings(email: str) -> List[Dict[str, Any]]:
+async def get_user_bookings(
+    email: str,
+    current_user: dict = Depends(get_current_user),
+) -> List[Dict[str, Any]]:
     database = get_db()
     if database is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database connection missing"
+            detail="Database connection missing",
         )
-    
+
     try:
         cursor = database.reservations.find({"user_email": email.strip().lower()})
         user_bookings = await cursor.to_list(length=100)
-        
+
         for booking in user_bookings:
             booking["id"] = str(booking["_id"])
             del booking["_id"]
-            
+
         return jsonable_encoder(user_bookings)
-        
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch user dashboard data: {str(e)}"
+            detail=f"Failed to fetch user dashboard data: {str(e)}",
         )
 
 
-# --- GET SINGLE RESERVATION BY ID (HANDLES BOTH SLASH FORMATS) ---
+# --- GET SINGLE RESERVATION BY ID (PROTECTED) ---
 @router.get("/{booking_id}")
 @router.get("/{booking_id}/")
-async def get_single_booking(booking_id: str) -> Dict[str, Any]:
+async def get_single_booking(
+    booking_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
     database = get_db()
     if database is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database offline"
+            detail="Database offline",
         )
-    
-    # Clean any accidental spaces or trailing slashes leaking from URL parameters
+
     clean_id = booking_id.strip().strip("/")
-        
+
     match_query = {"$or": [{"_id": clean_id}]}
     try:
         match_query["$or"].append({"_id": ObjectId(clean_id)})
@@ -118,9 +132,9 @@ async def get_single_booking(booking_id: str) -> Dict[str, Any]:
         if not booking:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Target reservation not found in the cluster database"
+                detail="Target reservation not found in the cluster database",
             )
-            
+
         booking["id"] = str(booking["_id"])
         del booking["_id"]
         return jsonable_encoder(booking)
@@ -129,23 +143,27 @@ async def get_single_booking(booking_id: str) -> Dict[str, Any]:
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to query database record: {str(e)}"
+            detail=f"Failed to query database record: {str(e)}",
         )
 
 
-# --- UPDATE/MODIFY OPERATION (HANDLES BOTH SLASH FORMATS) ---
+# --- UPDATE/MODIFY OPERATION (PROTECTED) ---
 @router.put("/{booking_id}")
 @router.put("/{booking_id}/")
-async def update_booking(booking_id: str, payload: BookingUpdate) -> Dict[str, str]:
+async def update_booking(
+    booking_id: str,
+    payload: BookingUpdate,
+    current_user: dict = Depends(get_current_user),
+) -> Dict[str, str]:
     database = get_db()
     if database is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database offline"
+            detail="Database offline",
         )
-    
+
     clean_id = booking_id.strip().strip("/")
-        
+
     match_query = {"$or": [{"_id": clean_id}]}
     try:
         match_query["$or"].append({"_id": ObjectId(clean_id)})
@@ -158,42 +176,44 @@ async def update_booking(booking_id: str, payload: BookingUpdate) -> Dict[str, s
 
     try:
         result = await database.reservations.update_one(
-            match_query,
-            {"$set": update_payload}
+            match_query, {"$set": update_payload}
         )
-        
+
         if result.matched_count == 0:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="No corresponding reservation found in the cluster"
+                detail="No corresponding reservation found in the cluster",
             )
-            
+
         return {
             "status": "success",
-            "message": "Transaction documents updated securely"
+            "message": "Transaction documents updated securely",
         }
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to modify database document cluster: {str(e)}"
+            detail=f"Failed to modify database document cluster: {str(e)}",
         )
 
 
-# --- DELETE/CANCEL OPERATION (HANDLES BOTH SLASH FORMATS) ---
+# --- DELETE/CANCEL OPERATION (PROTECTED) ---
 @router.delete("/{booking_id}")
 @router.delete("/{booking_id}/")
-async def delete_booking(booking_id: str) -> Dict[str, str]:
+async def delete_booking(
+    booking_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> Dict[str, str]:
     database = get_db()
     if database is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database offline"
+            detail="Database offline",
         )
-    
+
     clean_id = booking_id.strip().strip("/")
-        
+
     match_query = {"$or": [{"_id": clean_id}]}
     try:
         match_query["$or"].append({"_id": ObjectId(clean_id)})
@@ -202,21 +222,21 @@ async def delete_booking(booking_id: str) -> Dict[str, str]:
 
     try:
         result = await database.reservations.delete_one(match_query)
-        
+
         if result.deleted_count == 0:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Target document record missing or already dropped"
+                detail="Target document record missing or already dropped",
             )
-            
+
         return {
             "status": "success",
-            "message": "Reservation cleanly purged from the cluster database"
+            "message": "Reservation cleanly purged from the cluster database",
         }
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database record drop failed completely: {str(e)}"
+            detail=f"Database record drop failed completely: {str(e)}",
         )

@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation'; // 1. Added Next.js routing hook
+import { useRouter } from 'next/navigation';
 import { Button, Input, Loader, Modal, Toast } from '@/components/ui';
 import {
   api,
@@ -12,7 +12,6 @@ import {
   type StoredUser,
 } from '@/lib/api';
 
-// Extended interface securely passing the original database identifier
 interface ExtendedReservation extends Reservation {
   dbId: string;
 }
@@ -55,8 +54,10 @@ const initialEmptyMetrics: AIMetrics = {
 };
 
 export default function DashboardPage() {
-  const router = useRouter(); // 2. Initialized the router instance
+  const router = useRouter();
+  const [isMounted, setIsMounted] = useState(false);
   const [user, setUser] = useState<StoredUser | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [selectedReservation, setSelectedReservation] = useState<ExtendedReservation | null>(null);
   const [isImpactModalOpen, setIsImpactModalOpen] = useState(false);
   const [reservations, setReservations] = useState<ExtendedReservation[]>([]);
@@ -71,7 +72,13 @@ export default function DashboardPage() {
   const [toastMessage, setToastMessage] = useState('');
   const [toastVariant, setToastVariant] = useState<'success' | 'error'>('error');
 
-  // Automatically dismiss toast alerts after 4 seconds
+  // Ref guard to prevent double-execution loops
+  const hasInitialized = useRef(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   useEffect(() => {
     if (toastVisible) {
       const timer = setTimeout(() => setToastVisible(false), 4000);
@@ -79,21 +86,24 @@ export default function DashboardPage() {
     }
   }, [toastVisible]);
 
-  // Isolate database compilation logic so it can be re-triggered cleanly on mutations
-  const loadDashboardData = async (currentUser: StoredUser, isSilent = false) => {
+  const loadDashboardData = useCallback(async (currentUser: StoredUser, isSilent = false) => {
     if (!isSilent) setLoading(true);
     try {
-      await api.health();
-      const res = await fetch(`http://localhost:8000/api/bookings/user/${currentUser.email}`);
-      if (!res.ok) throw new Error("Database interface rejection");
-      
-      const rawBookings = await res.json();
+      try {
+        await api.health();
+        setBackendStatus('connected');
+      } catch {
+        setBackendStatus('fallback');
+      }
 
-      const dynamicReservations: ExtendedReservation[] = rawBookings.map((item: any) => {
+      const rawBookings: any = await api.bookings.getByUser(currentUser.email);
+      const bookingsArray = Array.isArray(rawBookings) ? rawBookings : [];
+
+      const dynamicReservations: ExtendedReservation[] = bookingsArray.map((item: any) => {
         const structuralId = item.id || item._id || '';
         return {
           id: `RSV-${String(structuralId).slice(-5).toUpperCase()}`,
-          dbId: structuralId, // Retain original primary key for updates/deletes
+          dbId: structuralId,
           guest: currentUser.name || "Akshay Dudhe",
           stay: item.stay_name || "Eco Stay Location",
           checkIn: item.check_in || "N/A",
@@ -120,9 +130,7 @@ export default function DashboardPage() {
         ],
       };
 
-      // GUARANTEED FIX: Since data successfully loaded from the backend, force the badge to Connected
       setBackendStatus('connected');
-      
       setReservations(dynamicReservations);
       setMetricsData(dynamicMetrics);
     } catch (err) {
@@ -133,55 +141,43 @@ export default function DashboardPage() {
     } finally {
       if (!isSilent) setLoading(false);
     }
-  };
+  }, []);
 
+  // Safe client-side mount initialization
   useEffect(() => {
+    if (!isMounted || hasInitialized.current) return;
+    hasInitialized.current = true;
+
     const currentUser = getStoredUser();
 
-    // 3. CRITICAL INTERCEPTION: If credentials don't exist, kick the user back out immediately
     if (!currentUser || !currentUser.email) {
-      router.push('/login?redirect=/dashboard');
+      setAuthError("No active user session found. Please log in.");
+      setLoading(false);
       return;
     }
 
     setUser(currentUser);
     loadDashboardData(currentUser);
-  }, [router]);
+  }, [isMounted, loadDashboardData]);
 
-  // CRUD Operation: UPDATE
   const handleModifyBooking = async (dbId: string) => {
     const newDate = prompt("Enter a new Check-In Date (YYYY-MM-DD):", "2026-08-15");
     if (!newDate) return;
 
     try {
-      let response = await fetch(`http://localhost:8000/api/bookings/${dbId}`, {
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${baseUrl}/api/bookings/${dbId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ check_in: newDate }),
       });
-
-      if (!response.ok) {
-        response = await fetch(`http://localhost:8000/api/bookings/${dbId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ check_in: newDate }),
-        });
-      }
-
-      if (!response.ok) {
-        response = await fetch(`http://localhost:8000/api/bookings/${dbId}/`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ check_in: newDate }),
-        });
-      }
 
       if (!response.ok) throw new Error("Could not update the transaction documents");
 
       setToastVariant('success');
       setToastMessage('Booking date adjusted successfully!');
       setToastVisible(true);
-      
+
       if (user) loadDashboardData(user, true);
     } catch (err) {
       setToastVariant('error');
@@ -190,22 +186,11 @@ export default function DashboardPage() {
     }
   };
 
-  // CRUD Operation: DELETE
   const handleCancelBooking = async (dbId: string) => {
     if (!confirm("Are you sure you want to completely remove this reservation from the cluster database?")) return;
 
     try {
-      let response = await fetch(`http://localhost:8000/api/bookings/${dbId}`, {
-        method: 'DELETE',
-      });
-
-      if (!response.ok) {
-        response = await fetch(`http://localhost:8000/api/bookings/${dbId}/`, {
-          method: 'DELETE',
-        });
-      }
-
-      if (!response.ok) throw new Error("Database rejection on record drop");
+      await api.bookings.cancel(dbId);
 
       setToastVariant('success');
       setToastMessage('Reservation purged successfully!');
@@ -235,6 +220,32 @@ export default function DashboardPage() {
       setAiLoading(false);
     }
   };
+
+  // Prevent flash during hydration
+  if (!isMounted) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Loader label="Initializing environment..." size="md" />
+      </div>
+    );
+  }
+
+  // Graceful handling if unauthenticated (prevents infinite redirect loop)
+  if (authError) {
+    return (
+      <div className="mx-auto flex min-h-[60vh] max-w-md flex-col items-center justify-center p-6 text-center">
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-6 dark:border-red-900/50 dark:bg-red-950/30">
+          <h2 className="text-lg font-bold text-red-800 dark:text-red-300">Session Required</h2>
+          <p className="mt-2 text-sm text-red-600 dark:text-red-400">{authError}</p>
+          <div className="mt-6">
+            <Button variant="primary" size="md" onClick={() => router.push('/login')}>
+              Go to Login Page
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-8 lg:flex-row lg:px-8">
@@ -285,7 +296,7 @@ export default function DashboardPage() {
               Impact Dashboard
             </h1>
             <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-              Logged in account: <span className="text-emerald-600 font-semibold">{user?.email || 'Loading...'}</span>
+              Logged in account: <span className="font-semibold text-emerald-600">{user?.email || 'Loading...'}</span>
             </p>
           </div>
           <Button variant="primary" size="md" onClick={() => setIsImpactModalOpen(true)}>
@@ -383,7 +394,7 @@ export default function DashboardPage() {
                   <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                     {reservations.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="px-5 py-8 text-center text-gray-500 dark:text-gray-400 font-medium">
+                        <td colSpan={6} className="px-5 py-8 text-center font-medium text-gray-500 dark:text-gray-400">
                           No active upcoming reservations found linked to this account database profile.
                         </td>
                       </tr>
@@ -403,7 +414,7 @@ export default function DashboardPage() {
                             {reservation.checkIn}
                           </td>
                           <td className="px-5 py-4">
-                            <span className="rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-2.5 py-0.5 text-xs font-semibold">
+                            <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
                               {reservation.status}
                             </span>
                           </td>

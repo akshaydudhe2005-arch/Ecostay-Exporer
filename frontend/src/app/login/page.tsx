@@ -1,23 +1,50 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Button, Input, Toast } from '@/components/ui';
+import { Button, Input, Loader, Toast } from '@/components/ui';
 import { api, saveSession } from '@/lib/api';
 
 export default function LoginPage() {
   const router = useRouter();
+  
+  // Hydration protection state
+  const [isMounted, setIsMounted] = useState(false);
+
+  // Form states
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+
+  // Error & Feedback states
   const [emailError, setEmailError] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [toastVisible, setToastVisible] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [toastVariant, setToastVariant] = useState<'success' | 'error'>('success');
   const [submitting, setSubmitting] = useState(false);
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+
+  // Mark component mounted on client side
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  // Auto-dismiss toast timer
+  useEffect(() => {
+    if (toastVisible) {
+      const timer = setTimeout(() => setToastVisible(false), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [toastVisible]);
+
+  // Mode switcher with state cleanup
+  const handleToggleMode = (newMode: 'login' | 'register') => {
+    setMode(newMode);
+    setEmailError('');
+    setPasswordError('');
+  };
 
   const validate = () => {
     let valid = true;
@@ -47,7 +74,7 @@ export default function LoginPage() {
     setToastVariant('success');
     setToastMessage(message);
     setToastVisible(true);
-    setTimeout(() => router.push('/dashboard'), 1200);
+    setTimeout(() => router.push('/dashboard'), 1000);
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -56,15 +83,29 @@ export default function LoginPage() {
 
     setSubmitting(true);
     try {
-      const response =
-        mode === 'login'
-          ? await api.login(email, password)
-          : await api.register(email, password, name);
-      saveSession(response.access_token, response.user);
+      let response: { access_token?: string; token?: string; user?: any };
+
+      if (mode === 'login') {
+        // Pass single object payload matching api.ts signature & FastAPI requirement
+        response = await api.auth.login({ email, password });
+      } else {
+        response = await api.auth.register({
+          email,
+          password,
+          name: name || email.split('@')[0],
+        });
+      }
+
+      const token = response.access_token || response.token || 'session_active';
+      const userData = response.user || { email, name: name || email.split('@')[0] };
+
+      // Persist session
+      saveSession(token, userData);
+
       handleSuccess(
         mode === 'login'
           ? 'Login successful! Redirecting to dashboard...'
-          : 'Account created! Redirecting to dashboard...',
+          : 'Account created! Redirecting to dashboard...'
       );
     } catch (err) {
       setToastVariant('error');
@@ -74,6 +115,15 @@ export default function LoginPage() {
       setSubmitting(false);
     }
   };
+
+  // Prevent SSR/Hydration flickering
+  if (!isMounted) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Loader label="Loading security features..." size="md" />
+      </div>
+    );
+  }
 
   return (
     <main className="flex flex-1 items-center justify-center px-4 py-12 sm:px-6">
@@ -101,6 +151,7 @@ export default function LoginPage() {
               autoComplete="name"
             />
           )}
+
           <Input
             label="Email Address"
             type="email"
@@ -113,6 +164,7 @@ export default function LoginPage() {
             error={emailError}
             autoComplete="email"
           />
+
           <Input
             label="Password"
             type="password"
@@ -125,14 +177,24 @@ export default function LoginPage() {
             error={passwordError}
             autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
           />
-          <Button variant="primary" size="lg" type="submit" className="w-full" disabled={submitting}>
-            {submitting
-              ? mode === 'login'
-                ? 'Signing in...'
-                : 'Creating account...'
-              : mode === 'login'
-                ? 'Sign In'
-                : 'Create Account'}
+
+          <Button
+            variant="primary"
+            size="lg"
+            type="submit"
+            className="w-full justify-center bg-emerald-700 hover:bg-emerald-800"
+            disabled={submitting}
+          >
+            {submitting ? (
+              <span className="flex items-center gap-2">
+                <Loader size="sm" />
+                {mode === 'login' ? 'Signing in...' : 'Creating account...'}
+              </span>
+            ) : mode === 'login' ? (
+              'Sign In'
+            ) : (
+              'Create Account'
+            )}
           </Button>
         </form>
 
@@ -143,7 +205,7 @@ export default function LoginPage() {
               <button
                 type="button"
                 className="font-medium text-emerald-600 hover:underline dark:text-emerald-400"
-                onClick={() => setMode('register')}
+                onClick={() => handleToggleMode('register')}
               >
                 Create an account
               </button>
@@ -154,7 +216,7 @@ export default function LoginPage() {
               <button
                 type="button"
                 className="font-medium text-emerald-600 hover:underline dark:text-emerald-400"
-                onClick={() => setMode('login')}
+                onClick={() => handleToggleMode('login')}
               >
                 Sign in
               </button>

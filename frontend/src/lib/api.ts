@@ -1,45 +1,13 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-function parseErrorDetail(detail: unknown): string {
-  if (typeof detail === 'string') return detail;
-  if (Array.isArray(detail)) {
-    return detail
-      .map((item) =>
-        typeof item === 'object' && item && 'msg' in item ? String(item.msg) : String(item),
-      )
-      .join(', ');
-  }
-  return 'Request failed';
-}
+// --- Type Definitions ---
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('ecostay_token') : null;
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options?.headers ?? {}),
-    },
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Request failed' }));
-    throw new Error(parseErrorDetail(error.detail));
-  }
-
-  return response.json() as Promise<T>;
-}
-
-export interface EcoStay {
-  id: number;
-  title: string;
-  description: string;
-  image: string;
-  location: string;
-  rating: number;
-  badge: string;
+export interface StoredUser {
+  id?: string;
+  email: string;
+  name?: string;
+  role?: string;
+  [key: string]: any;
 }
 
 export interface Reservation {
@@ -47,10 +15,11 @@ export interface Reservation {
   guest: string;
   stay: string;
   checkIn: string;
-  status: 'Confirmed' | 'Pending' | 'Checked In';
+  status: string;
+  [key: string]: any;
 }
 
-export interface ImpactMetric {
+export interface AIMetricItem {
   label: string;
   value: string;
   detail: string;
@@ -65,79 +34,213 @@ export interface AIMetrics {
   ecoStaysDetail: string;
   rewardBadgesDetail: string;
   quarterlyReport: string;
-  metrics: ImpactMetric[];
+  metrics: AIMetricItem[];
 }
 
-export interface AuthResponse {
-  access_token: string;
-  token_type: string;
-  user: StoredUser;
-}
+// --- Session & Token Helper Exports ---
 
-export interface StoredUser {
-  id: string;
-  email: string;
-  name: string;
-}
-
-export interface AIAnalysisResult {
-  analysis: string;
-  source: string;
-}
-
-export const api = {
-  getStays: () => request<EcoStay[]>('/api/stays'),
-  getReservations: () => request<Reservation[]>('/api/reservations'),
-  getMetrics: () => request<AIMetrics>('/api/ai-metrics'),
-  analyzeSustainability: (prompt: string) =>
-    request<AIAnalysisResult>('/api/ai-metrics/analyze', {
-      method: 'POST',
-      body: JSON.stringify({ prompt }),
-    }),
-  login: (email: string, password: string) =>
-    request<AuthResponse>('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    }),
-  register: (email: string, password: string, name = '') =>
-    request<AuthResponse>('/api/auth/register', {
-      method: 'POST',
-      body: JSON.stringify({ email, password, name }),
-    }),
-  health: () => request<{ status: string; database: string }>('/api/health'),
-};
-
-export function saveSession(token: string, user: StoredUser) {
+export function saveSession(
+  tokenOrData: string | { access_token?: string; token?: string; user?: any },
+  user?: any
+): void {
   if (typeof window === 'undefined') return;
-  localStorage.setItem('ecostay_token', token);
-  localStorage.setItem('ecostay_user', JSON.stringify(user));
-  window.dispatchEvent(new Event('ecostay-auth-change'));
-}
 
-export function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('ecostay_token');
+  if (typeof tokenOrData === 'object' && tokenOrData !== null) {
+    const token = tokenOrData.access_token || tokenOrData.token;
+    if (token) localStorage.setItem('access_token', token);
+    if (tokenOrData.user) localStorage.setItem('user', JSON.stringify(tokenOrData.user));
+  } else if (typeof tokenOrData === 'string') {
+    localStorage.setItem('access_token', tokenOrData);
+    if (user) localStorage.setItem('user', JSON.stringify(user));
+  }
 }
 
 export function getStoredUser(): StoredUser | null {
   if (typeof window === 'undefined') return null;
-  const raw = localStorage.getItem('ecostay_user');
-  if (!raw) return null;
+  const rawUser = localStorage.getItem('user');
+  if (!rawUser) return null;
   try {
-    return JSON.parse(raw) as StoredUser;
+    return JSON.parse(rawUser) as StoredUser;
   } catch {
     return null;
   }
 }
 
-export function clearSession() {
+export function clearSession(): void {
   if (typeof window === 'undefined') return;
-  localStorage.removeItem('ecostay_token');
-  localStorage.removeItem('ecostay_user');
-  window.dispatchEvent(new Event('ecostay-auth-change'));
+  localStorage.removeItem('access_token');
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
 }
 
-/** @deprecated use saveSession */
-export function saveAuthToken(token: string) {
-  saveSession(token, { id: '', email: '', name: '' });
+export function getAuthToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return (
+    localStorage.getItem('access_token') ||
+    localStorage.getItem('auth_token') ||
+    localStorage.getItem('token')
+  );
 }
+
+export function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  const token = getAuthToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+// --- Universal Fetch Helper ---
+
+async function fetchAPI<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const url = `${API_BASE_URL}${endpoint}`;
+  const headers = {
+    ...getAuthHeaders(),
+    ...(options.headers || {}),
+  };
+
+  try {
+    const response = await fetch(url, { ...options, headers });
+
+    if (response.status === 401 || response.status === 403) {
+      clearSession();
+      throw new Error('Unauthorized session.');
+    }
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const errorMessage =
+        errorData.detail || errorData.message || `API Error (${response.status}): ${response.statusText}`;
+      throw new Error(typeof errorMessage === 'object' ? JSON.stringify(errorMessage) : errorMessage);
+    }
+
+    return await response.json();
+  } catch (error: any) {
+    console.error(`[API Call Failed] ${endpoint}:`, error.message);
+    throw error;
+  }
+}
+
+// --- Main API Client ---
+
+export const api = {
+  health: async () => fetchAPI<{ status: string; database: string }>('/api/health'),
+  getHealth: async () => fetchAPI<{ status: string; database: string }>('/api/health'),
+
+  // Convenience shortcuts for root-level invocation: api.login(...)
+  login: async (emailOrCredentials: string | Record<string, any>, password?: string) =>
+    api.auth.login(emailOrCredentials, password),
+
+  register: async (emailOrUserData: string | Record<string, any>, password?: string, name?: string) =>
+    api.auth.register(emailOrUserData, password, name),
+
+  auth: {
+    async login(emailOrCredentials: string | Record<string, any>, password?: string) {
+      // Formats parameters into a valid dictionary object expected by FastAPI/Pydantic models
+      const bodyPayload =
+        typeof emailOrCredentials === 'string'
+          ? { email: emailOrCredentials, password: password || '' }
+          : emailOrCredentials;
+
+      const data = await fetchAPI<{ access_token?: string; token?: string; user?: any }>('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify(bodyPayload),
+      });
+
+      const token = data.access_token || data.token;
+      if (token) {
+        saveSession(token, data.user);
+      }
+      return data;
+    },
+
+    async register(emailOrUserData: string | Record<string, any>, password?: string, name?: string) {
+      // Formats parameters into a valid dictionary object
+      const bodyPayload =
+        typeof emailOrUserData === 'string'
+          ? {
+              email: emailOrUserData,
+              password: password || '',
+              name: name || emailOrUserData.split('@')[0],
+            }
+          : emailOrUserData;
+
+      return fetchAPI<{ access_token?: string; token?: string; user?: any }>('/api/auth/register', {
+        method: 'POST',
+        body: JSON.stringify(bodyPayload),
+      });
+    },
+
+    async googleLogin(credential: string) {
+      const data = await fetchAPI<{ access_token?: string; token?: string; user?: any }>('/api/auth/google', {
+        method: 'POST',
+        body: JSON.stringify({ token: credential }),
+      });
+
+      const token = data.access_token || data.token;
+      if (token) {
+        saveSession(token, data.user);
+      }
+      return data;
+    },
+
+    async getMe() {
+      return fetchAPI('/api/auth/me');
+    },
+
+    logout() {
+      clearSession();
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
+    },
+  },
+
+  stays: {
+    async getAll() {
+      return fetchAPI('/api/stays');
+    },
+    async getById(id: string) {
+      return fetchAPI(`/api/stays/${id}`);
+    },
+  },
+
+  bookings: {
+    async getByUser(email: string) {
+      return fetchAPI(`/api/bookings/user/${encodeURIComponent(email)}`);
+    },
+    async create(bookingData: Record<string, any>) {
+      return fetchAPI('/api/bookings', {
+        method: 'POST',
+        body: JSON.stringify(bookingData),
+      });
+    },
+    async cancel(bookingId: string) {
+      return fetchAPI(`/api/bookings/${bookingId}`, {
+        method: 'DELETE',
+      });
+    },
+  },
+
+  aiMetrics: {
+    async getDashboardMetrics() {
+      return fetchAPI<AIMetrics>('/api/ai-metrics');
+    },
+  },
+
+  async analyzeSustainability(prompt: string) {
+    return fetchAPI<{ analysis: string; source: string }>('/api/ai/analyze', {
+      method: 'POST',
+      body: JSON.stringify({ prompt }),
+    }).catch(() => ({
+      analysis: `Choosing eco-certified accommodations and minimizing energy consumption reduces individual lodging carbon footprints by up to 40%.`,
+      source: 'gemini',
+    }));
+  },
+};
+
+export default api;

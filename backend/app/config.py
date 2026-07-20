@@ -22,6 +22,3 @@ JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = 60 * 24
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 CORS_ORIGINS = ["http://localhost:3000"]
-# Add this to the bottom of app/config.py
-print(f"DEBUG: GEMINI_API_KEY loaded: {GEMINI_API_KEY}")
-print(f"DEBUG: MONGO_URI loaded: {MONGO_URI}")
