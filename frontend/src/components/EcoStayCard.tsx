@@ -20,8 +20,8 @@ interface StayProps {
 
 export function EcoStayCard({ stay }: StayProps) {
   const router = useRouter();
-  
-  // Safe extraction of backend IDs (checks stay.id, stay._id, and falls back gracefully)
+
+  // Extract ID gracefully across backend conventions
   const stayId = stay.id || stay._id || 'mock_stay_id';
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -35,16 +35,38 @@ export function EcoStayCard({ stay }: StayProps) {
   const [toastMessage, setToastMessage] = useState('');
   const [toastVariant, setToastVariant] = useState<'success' | 'error' | 'info'>('success');
 
+  // Token retrieval that checks every common storage key & sanitizes the string
+  const getActiveToken = (): string | null => {
+    const currentUser = getStoredUser();
+
+    const rawToken =
+      currentUser?.token ||
+      currentUser?.access_token ||
+      currentUser?.jwt ||
+      localStorage.getItem('access_token') ||
+      localStorage.getItem('token') ||
+      localStorage.getItem('ecostay_token');
+
+    if (!rawToken) return null;
+
+    // Clean token string (removes extra quotes or duplicate 'Bearer' prefixes)
+    return String(rawToken)
+      .replace(/^Bearer\s+/i, '')
+      .replace(/["']/g, '')
+      .trim();
+  };
+
   const refreshAuthStatus = useCallback(() => {
     const currentUser = getStoredUser();
-    setIsAuthenticated(currentUser !== null);
+    const token = getActiveToken();
+    setIsAuthenticated(currentUser !== null || token !== null);
   }, []);
 
   useEffect(() => {
     refreshAuthStatus();
     window.addEventListener('ecostay-auth-change', refreshAuthStatus);
     window.addEventListener('focus', refreshAuthStatus);
-    
+
     return () => {
       window.removeEventListener('ecostay-auth-change', refreshAuthStatus);
       window.removeEventListener('focus', refreshAuthStatus);
@@ -58,9 +80,10 @@ export function EcoStayCard({ stay }: StayProps) {
   };
 
   const handleBookingTrigger = () => {
+    const token = getActiveToken();
     const activeUserSession = getStoredUser();
 
-    if (!activeUserSession) {
+    if (!activeUserSession && !token) {
       showNotification('Authentication required. Routing to login gateway...', 'info');
       setTimeout(() => {
         router.push('/login');
@@ -71,27 +94,39 @@ export function EcoStayCard({ stay }: StayProps) {
     setIsModalOpen(true);
   };
 
-const handleBookingSubmit = async (e: React.FormEvent) => {
+  const handleBookingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
     if (!checkIn || !checkOut) {
       showNotification('Please select both Check-In and Check-Out dates.', 'error');
       return;
     }
 
+    const token = getActiveToken();
     const currentUser = getStoredUser();
     const userEmail = currentUser?.email || 'studyofakshay@gmail.com';
 
+    if (!token) {
+      showNotification('Session token missing. Please log in again.', 'error');
+      setIsModalOpen(false);
+      router.push('/login');
+      return;
+    }
+
     setLoading(true);
+
     try {
-      const response = await fetch('http://localhost:8000/api/bookings', {
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+      const response = await fetch(`${baseUrl}/api/bookings`, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}` 
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
-          stay_id: String(stayId), // Force conversion to String to satisfy Pydantic
-          stay_name: stay.name || 'EcoStay Homestay', // Fallback string if name is missing
+          stay_id: String(stayId),
+          stay_name: stay.name || 'EcoStay Homestay',
           check_in: checkIn,
           check_out: checkOut,
           guests: Number(guests),
@@ -105,52 +140,77 @@ const handleBookingSubmit = async (e: React.FormEvent) => {
         errorData = await response.json();
       }
 
+      // Handle 401 Unauthorized explicitly without throwing red Next.js exception overlays
+      if (response.status === 401) {
+        // Clear stale session tokens across all storage keys
+        localStorage.removeItem('ecostay_user');
+        localStorage.removeItem('ecostay_token');
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('token');
+
+        window.dispatchEvent(new Event('ecostay-auth-change'));
+        setIsModalOpen(false);
+        showNotification('Invalid or expired authentication token. Please re-login.', 'error');
+
+        setTimeout(() => {
+          router.push('/login');
+        }, 1200);
+        return;
+      }
+
       if (!response.ok) {
-        const parsedDetail = errorData?.detail 
-          ? (typeof errorData.detail === 'object' ? JSON.stringify(errorData.detail) : errorData.detail)
+        const parsedDetail = errorData?.detail
+          ? typeof errorData.detail === 'object'
+            ? JSON.stringify(errorData.detail)
+            : errorData.detail
           : null;
 
-        throw new Error(parsedDetail || errorData?.message || 'Database validation mismatch.');
+        throw new Error(parsedDetail || errorData?.message || 'Database validation failed.');
       }
-      
+
       showNotification('Reservation secured successfully!', 'success');
       setIsModalOpen(false);
       setCheckIn('');
       setCheckOut('');
       setGuests(1);
     } catch (error: any) {
-      console.error('Booking Error Details:', error);
+      console.error('Booking Submission Error:', error);
       showNotification(error.message || 'Database communication failure.', 'error');
     } finally {
       setLoading(false);
     }
   };
+
   return (
     <>
-      <div className="border border-gray-100 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-200 bg-white flex flex-col h-[430px] w-full dark:bg-neutral-900 dark:border-neutral-800">
-        <div className="relative overflow-hidden bg-gray-100 dark:bg-neutral-800 h-48 shrink-0">
+      <div className="flex h-[430px] w-full flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm transition-all duration-200 hover:shadow-md dark:border-neutral-800 dark:bg-neutral-900">
+        <div className="relative h-48 shrink-0 overflow-hidden bg-gray-100 dark:bg-neutral-800">
           <img
             src={stay.image || '/placeholder.jpg'}
             alt={stay.name}
-            className="w-full h-full object-cover transition-transform duration-500 ease-out hover:scale-110 cursor-zoom-in"
+            className="h-full w-full cursor-zoom-in object-cover transition-transform duration-500 ease-out hover:scale-110"
           />
           {stay.ecoLabel && (
-            <span className="absolute top-3 left-3 text-[11px] font-bold uppercase tracking-wider text-white bg-green-600 px-2.5 py-1 rounded-md z-10">
+            <span className="absolute top-3 left-3 z-10 rounded-md bg-green-600 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-white">
               {stay.ecoLabel}
             </span>
           )}
         </div>
 
-        <div className="p-5 flex flex-col justify-between flex-grow">
+        <div className="flex flex-grow flex-col justify-between p-5">
           <div className="space-y-2">
-            <div className="flex justify-between items-center text-sm text-gray-500">
-              <span className="text-xs uppercase font-semibold tracking-wider text-green-700 dark:text-emerald-500">
+            <div className="flex items-center justify-between text-sm text-gray-500">
+              <span className="text-xs font-semibold uppercase tracking-wider text-green-700 dark:text-emerald-500">
                 {stay.location}
               </span>
-              <span className="font-medium flex items-center gap-1 dark:text-neutral-300">⭐ {stay.rating}</span>
+              <span className="flex items-center gap-1 font-medium dark:text-neutral-300">
+                ⭐ {stay.rating}
+              </span>
             </div>
-            <h3 className="font-bold text-lg text-gray-950 dark:text-white line-clamp-1">{stay.name}</h3>
-            <p className="text-sm text-gray-500 dark:text-neutral-400 line-clamp-2 min-h-[40px]">
+            <h3 className="line-clamp-1 text-lg font-bold text-gray-950 dark:text-white">
+              {stay.name}
+            </h3>
+            <p className="line-clamp-2 min-h-[40px] text-sm text-gray-500 dark:text-neutral-400">
               {stay.description}
             </p>
           </div>
@@ -163,20 +223,57 @@ const handleBookingSubmit = async (e: React.FormEvent) => {
         </div>
       </div>
 
-      {/* Title safely renders stay.name even if structural parameters load dynamically */}
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={`Book ${stay.name || 'Your Eco-Stay'}`}>
-        <form onSubmit={handleBookingSubmit} className="space-y-4 mt-2">
-          <Input label="Check-In" type="date" value={checkIn} onChange={(e) => setCheckIn(e.target.value)} disabled={loading} />
-          <Input label="Check-Out" type="date" value={checkOut} onChange={(e) => setCheckOut(e.target.value)} disabled={loading} />
-          <Input label="Guests" type="number" min={1} value={guests} onChange={(e) => setGuests(Number(e.target.value))} disabled={loading} />
-          <div className="flex justify-end gap-3 pt-4 border-t border-gray-100 dark:border-neutral-800">
-            <Button variant="secondary" size="md" type="button" onClick={() => setIsModalOpen(false)} disabled={loading}>Cancel</Button>
-            <Button variant="primary" size="md" type="submit" disabled={loading}>Confirm Reservation</Button>
+      <Modal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title={`Book ${stay.name || 'Your Eco-Stay'}`}
+      >
+        <form onSubmit={handleBookingSubmit} className="mt-2 space-y-4">
+          <Input
+            label="Check-In"
+            type="date"
+            value={checkIn}
+            onChange={(e) => setCheckIn(e.target.value)}
+            disabled={loading}
+          />
+          <Input
+            label="Check-Out"
+            type="date"
+            value={checkOut}
+            onChange={(e) => setCheckOut(e.target.value)}
+            disabled={loading}
+          />
+          <Input
+            label="Guests"
+            type="number"
+            min={1}
+            value={guests}
+            onChange={(e) => setGuests(Number(e.target.value))}
+            disabled={loading}
+          />
+          <div className="flex justify-end gap-3 border-t border-gray-100 pt-4 dark:border-neutral-800">
+            <Button
+              variant="secondary"
+              size="md"
+              type="button"
+              onClick={() => setIsModalOpen(false)}
+              disabled={loading}
+            >
+              Cancel
+            </Button>
+            <Button variant="primary" size="md" type="submit" disabled={loading}>
+              {loading ? 'Processing...' : 'Confirm Reservation'}
+            </Button>
           </div>
         </form>
       </Modal>
 
-      <Toast message={toastMessage} variant={toastVariant} visible={toastVisible} onDismiss={() => setToastVisible(false)} />
+      <Toast
+        message={toastMessage}
+        variant={toastVariant}
+        visible={toastVisible}
+        onDismiss={() => setToastVisible(false)}
+      />
     </>
   );
 }

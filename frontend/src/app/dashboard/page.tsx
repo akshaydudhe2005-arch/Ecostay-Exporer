@@ -57,7 +57,6 @@ export default function DashboardPage() {
   const router = useRouter();
   const [isMounted, setIsMounted] = useState(false);
   const [user, setUser] = useState<StoredUser | null>(null);
-  const [authError, setAuthError] = useState<string | null>(null);
   const [selectedReservation, setSelectedReservation] = useState<ExtendedReservation | null>(null);
   const [isImpactModalOpen, setIsImpactModalOpen] = useState(false);
   const [reservations, setReservations] = useState<ExtendedReservation[]>([]);
@@ -72,8 +71,25 @@ export default function DashboardPage() {
   const [toastMessage, setToastMessage] = useState('');
   const [toastVariant, setToastVariant] = useState<'success' | 'error'>('error');
 
-  // Ref guard to prevent double-execution loops
   const hasInitialized = useRef(false);
+
+  // Helper function to extract and sanitize bearer auth token
+  const getActiveToken = (): string => {
+    const currentUser = getStoredUser();
+    const rawToken =
+      currentUser?.token ||
+      currentUser?.access_token ||
+      localStorage.getItem('access_token') ||
+      localStorage.getItem('token') ||
+      localStorage.getItem('ecostay_token');
+
+    if (!rawToken) return '';
+
+    return String(rawToken)
+      .replace(/^Bearer\s+/i, '')
+      .replace(/["']/g, '')
+      .trim();
+  };
 
   useEffect(() => {
     setIsMounted(true);
@@ -143,7 +159,6 @@ export default function DashboardPage() {
     }
   }, []);
 
-  // Safe client-side mount initialization
   useEffect(() => {
     if (!isMounted || hasInitialized.current) return;
     hasInitialized.current = true;
@@ -151,31 +166,56 @@ export default function DashboardPage() {
     const currentUser = getStoredUser();
 
     if (!currentUser || !currentUser.email) {
-      setAuthError("No active user session found. Please log in.");
-      setLoading(false);
+      router.replace('/login');
       return;
     }
 
     setUser(currentUser);
     loadDashboardData(currentUser);
-  }, [isMounted, loadDashboardData]);
+  }, [isMounted, loadDashboardData, router]);
 
-  const handleModifyBooking = async (dbId: string) => {
-    const newDate = prompt("Enter a new Check-In Date (YYYY-MM-DD):", "2026-08-15");
-    if (!newDate) return;
+const handleModifyBooking = async (dbId: string, currentCheckIn: string) => {
+    // Dynamic default pre-fill from selected reservation
+    const initialPromptValue = currentCheckIn && currentCheckIn !== 'N/A' ? currentCheckIn : '2026-07-25';
+    const newDate = prompt("Enter a new Check-In Date (YYYY-MM-DD):", initialPromptValue);
+    
+    if (!newDate || newDate.trim() === initialPromptValue) return;
 
     try {
       const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const response = await fetch(`${baseUrl}/api/bookings/${dbId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ check_in: newDate }),
+      const token = getActiveToken();
+
+      const headers = { 
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      };
+
+      // Try PUT first (standard FastAPI @app.put route)
+      let response = await fetch(`${baseUrl}/api/bookings/${dbId}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ check_in: newDate.trim() }),
       });
 
-      if (!response.ok) throw new Error("Could not update the transaction documents");
+      // Fallback to POST if backend endpoint is configured as @app.post
+      if (response.status === 405) {
+        response = await fetch(`${baseUrl}/api/bookings/${dbId}`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ check_in: newDate.trim() }),
+        });
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const detail = errorData.detail 
+          ? (typeof errorData.detail === 'object' ? JSON.stringify(errorData.detail) : errorData.detail)
+          : null;
+        throw new Error(detail || errorData.message || "Could not update the reservation");
+      }
 
       setToastVariant('success');
-      setToastMessage('Booking date adjusted successfully!');
+      setToastMessage('Booking check-in date adjusted successfully!');
       setToastVisible(true);
 
       if (user) loadDashboardData(user, true);
@@ -185,7 +225,6 @@ export default function DashboardPage() {
       setToastVisible(true);
     }
   };
-
   const handleCancelBooking = async (dbId: string) => {
     if (!confirm("Are you sure you want to completely remove this reservation from the cluster database?")) return;
 
@@ -221,28 +260,10 @@ export default function DashboardPage() {
     }
   };
 
-  // Prevent flash during hydration
-  if (!isMounted) {
+  if (!isMounted || !user) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <Loader label="Initializing environment..." size="md" />
-      </div>
-    );
-  }
-
-  // Graceful handling if unauthenticated (prevents infinite redirect loop)
-  if (authError) {
-    return (
-      <div className="mx-auto flex min-h-[60vh] max-w-md flex-col items-center justify-center p-6 text-center">
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-6 dark:border-red-900/50 dark:bg-red-950/30">
-          <h2 className="text-lg font-bold text-red-800 dark:text-red-300">Session Required</h2>
-          <p className="mt-2 text-sm text-red-600 dark:text-red-400">{authError}</p>
-          <div className="mt-6">
-            <Button variant="primary" size="md" onClick={() => router.push('/login')}>
-              Go to Login Page
-            </Button>
-          </div>
-        </div>
       </div>
     );
   }
@@ -339,7 +360,7 @@ export default function DashboardPage() {
                 <Input
                   label="Your question"
                   type="text"
-                  placeholder="How can I travel more sustainably?"
+                  placeholder="How can I reduce my travel carbon footprint?"
                   value={aiPrompt}
                   onChange={(e) => setAiPrompt(e.target.value)}
                   className="flex-1"
@@ -430,7 +451,7 @@ export default function DashboardPage() {
                               <Button
                                 variant="secondary"
                                 size="sm"
-                                onClick={() => handleModifyBooking(reservation.dbId)}
+                                onClick={() => handleModifyBooking(reservation.dbId, reservation.checkIn)}
                                 className="border-amber-500 text-amber-600 hover:bg-amber-50"
                               >
                                 Modify
