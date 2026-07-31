@@ -18,7 +18,6 @@ interface ExtendedReservation extends Reservation {
 
 const sidebarLinks = [
   { href: '/dashboard', label: 'Overview', active: true },
-  { href: '/showcase', label: 'Components', active: false },
   { href: '/about', label: 'Mission', active: false },
   { href: '/login', label: 'Account', active: false },
 ];

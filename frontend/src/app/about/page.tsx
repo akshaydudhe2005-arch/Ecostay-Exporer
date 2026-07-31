@@ -66,7 +66,7 @@ export default function AboutPage() {
 
       <div className="mt-12 flex flex-wrap gap-3">
         <PageButtonLink href="/dashboard" label="View Impact Dashboard" variant="primary" />
-        <PageButtonLink href="/showcase" label="UI Component Showcase" variant="secondary" />
+
       </div>
     </main>
   );

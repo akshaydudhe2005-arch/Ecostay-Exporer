@@ -6,3 +6,7 @@ python-dotenv
 passlib[bcrypt]
 bcrypt
 pyjwt
+slowapi
+certifi
+google-auth
+requests

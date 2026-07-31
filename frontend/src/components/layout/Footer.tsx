@@ -6,8 +6,7 @@ export function Footer() {
           EcoStay Explorer
         </p>
         <p className="text-xs text-gray-500 dark:text-gray-400">
-          Sustainable travel for a greener tomorrow. Week 3 internship deliverables.
-        </p>
+          Sustainable travel for a greener tomorrow. </p>
       </div>
     </footer>
   );
