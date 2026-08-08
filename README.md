@@ -3,6 +3,8 @@
 > **TBI-GEU Full-Stack Web Development Internship Capstone Project**  
 > **Intern ID:** `TBI-26101102`
 
+> \*\*LINKEDIN URL : https://www.linkedin.com/in/akshay-dudhe-02498a364?utm_source=share_via&utm_content=profile&utm_medium=member_android
+
 ---
 
 ## 📌 Project Overview
@@ -74,7 +76,10 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 Backend will run locally at http://localhost:8000.3. Frontend SetupBashcd ../frontend
 npm install
+
+
 npm run dev
+
 Frontend will run locally at http://localhost:3000.🔑
 
 Environment Variables SetupCreate .env files using .env.example as a baseline.Frontend Environment (frontend/.env.local)Code snippetNEXT_PUBLIC_API_URL=[https://ecostay-backend.onrender.com](https://ecostay-backend.onrender.com)
