@@ -3,7 +3,7 @@
 > **TBI-GEU Full-Stack Web Development Internship Capstone Project**  
 > **Intern ID:** `TBI-26101102`
 
-> \*\*LINKEDIN URL : https://www.linkedin.com/in/akshay-dudhe-02498a364?utm_source=share_via&utm_content=profile&utm_medium=member_android
+**LINKEDIN URL : https://www.linkedin.com/in/akshay-dudhe-02498a364?utm_source=share_via&utm_content=profile&utm_medium=member_android **
 
 ---
 
